@@ -71,6 +71,14 @@ jobs:
             exit 1
           fi
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-amd64.out
+          flags: spin-linux-amd64
+          name: spin
+          fail_ci_if_error: true
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
