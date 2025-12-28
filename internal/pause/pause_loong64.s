@@ -13,9 +13,9 @@ TEXT ·pause1(SB), NOSPLIT|NOFRAME, $0-0
 
 // func pauseN(cycles int)
 TEXT ·pauseN(SB), NOSPLIT|NOFRAME, $0-8
-    MOVV cycles+0(FP), R0
+    MOVV cycles+0(FP), R4
 loop:
     OR    R0, R0, R0
-    ADDV  $-1, R0, R0
-    BNE   R0, loop
+    ADDV  $-1, R4, R4
+    BNE   R4, loop
     RET

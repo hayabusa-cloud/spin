@@ -6,16 +6,18 @@
 
 #include "textflag.h"
 
+#define PAUSE WORD $0x0100000F // Zihintpause
+
 // func pause1()
 TEXT ·pause1(SB), NOSPLIT|NOFRAME, $0-0
-    FENCE
+    PAUSE
     RET
 
 // func pauseN(cycles int)
 TEXT ·pauseN(SB), NOSPLIT|NOFRAME, $0-8
     MOV  cycles+0(FP), X10
 loop:
-    FENCE
-    ADDI $-1, X10, X10     // X10 = X10 - 1
+    PAUSE
+    ADDI $-1, X10, X10
     BNEZ X10, loop
     RET
