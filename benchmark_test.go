@@ -207,8 +207,7 @@ func BenchmarkSpinWaitPattern(b *testing.B) {
 	b.Run("Wait/UntilCondition", func(b *testing.B) {
 		for range b.N {
 			var sw spin.Wait
-			for i := range 16 {
-				_ = i
+			for range 16 {
 				sw.Once()
 			}
 		}
