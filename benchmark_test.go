@@ -20,8 +20,7 @@ import (
 func BenchmarkLock(b *testing.B) {
 	b.Run("Uncontended", func(b *testing.B) {
 		var lk spin.Lock
-		for i := range b.N {
-			_ = i
+		for range b.N {
 			lk.Lock()
 			lk.Unlock()
 		}
