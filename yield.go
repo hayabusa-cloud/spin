@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-var yieldDuration = 250 * time.Microsecond
+var (
+	yieldDuration = 250 * time.Microsecond
+	yieldMu       Lock // protects yieldDuration
+)
 
 // Yield cooperatively yields execution to reduce CPU burn in tight loops.
 //
@@ -22,7 +25,9 @@ var yieldDuration = 250 * time.Microsecond
 //
 // For automatic adaptive backoff in tight loops, use Wait instead.
 func Yield(duration ...time.Duration) {
+	yieldMu.Lock()
 	d := yieldDuration
+	yieldMu.Unlock()
 	if len(duration) > 0 {
 		d = max(0, duration[0])
 	}
@@ -34,10 +39,13 @@ func Yield(duration ...time.Duration) {
 }
 
 // SetYieldDuration sets the base duration unit for Yield().
+// Safe for concurrent use.
 // Recommended: 50-250 microseconds for real-time systems, 1-4 ms for general workloads.
 func SetYieldDuration(d time.Duration) {
 	if d < 0 {
 		d = 0
 	}
+	yieldMu.Lock()
 	yieldDuration = d
+	yieldMu.Unlock()
 }

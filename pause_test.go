@@ -15,7 +15,7 @@ import (
 )
 
 func TestPause(t *testing.T) {
-	// Default (20 cycles)
+	// Default (30 cycles)
 	spin.Pause()
 
 	// Single cycle
