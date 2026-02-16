@@ -1,3 +1,3 @@
 module code.hybscloud.com/spin
 
-go 1.25
+go 1.26
