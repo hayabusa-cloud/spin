@@ -15,10 +15,10 @@ import (
 )
 
 func TestPause(t *testing.T) {
-	// Default (30 cycles)
+	// Default (30 pause hints)
 	spin.Pause()
 
-	// Single cycle
+	// Single pause hint
 	spin.Pause(1)
 
 	// Multiple iterations should not hang or panic

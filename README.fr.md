@@ -55,7 +55,7 @@ func main() {
   - `Reset()` remet à zéro les compteurs internes.
 
 - `func Pause(cycles ...int)`
-  - Émet un indice CPU spécifique à l’architecture et ne doit ni bloquer ni céder au planificateur.
+  - Émet un indice CPU pause spécifique à l’architecture. Si `cycles` est omis, la valeur par défaut est 30 indices pause. `cycles` est un compte de répétitions d’indices pause, pas un délai CPU calibré. Sur les cibles avec pause matérielle, il ne bloque pas et ne cède pas au planificateur ; wasm et les cibles de repli non prises en charge peuvent céder via `runtime.Gosched()`.
 
 - `func Yield(duration ...time.Duration)`
   - Cède de manière coopérative. Par défaut dort une courte durée ; si la valeur est non positive, se rabat sur `runtime.Gosched()`.
