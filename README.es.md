@@ -55,7 +55,7 @@ func main() {
   - `Reset()` limpia contadores internos.
 
 - `func Pause(cycles ...int)`
-  - Emite una pista específica de la arquitectura y no debe bloquear ni ceder al planificador.
+  - Emite una pista CPU pause específica de la arquitectura. Si se omite, `cycles` usa 30 pistas pause por defecto. `cycles` es un conteo de repetición de pistas pause, no un retardo calibrado en ciclos de CPU. En objetivos con pause de hardware no bloquea ni cede al planificador; wasm y los objetivos de reserva no compatibles pueden ceder mediante `runtime.Gosched()`.
 
 - `func Yield(duration ...time.Duration)`
   - Cede cooperativamente. Por defecto duerme un intervalo corto; si es no positivo, recurre a `runtime.Gosched()`.

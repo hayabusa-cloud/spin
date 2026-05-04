@@ -55,7 +55,7 @@ func main() {
   - `Reset()` 内部カウンタをクリアします。
 
 - `func Pause(cycles ...int)`
-  - アーキテクチャ依存の CPU ヒントを発行し、スケジューラをブロック/譲歩しません。
+  - アーキテクチャ依存の CPU pause ヒントを発行します。`cycles` を省略すると既定で 30 回の pause ヒントを使用します。`cycles` は pause ヒントの反復回数であり、校正済みの CPU サイクル遅延ではありません。ハードウェア pause 対応ターゲットではスケジューラをブロック/譲歩しませんが、wasm と未対応のフォールバックターゲットでは `runtime.Gosched()` によって譲歩する場合があります。
 
 - `func Yield(duration ...time.Duration)`
   - 協調的に譲歩します。既定では短時間 sleep し、非正値なら `runtime.Gosched()` にフォールバックします。

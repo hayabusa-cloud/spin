@@ -55,7 +55,7 @@ func main() {
   - `Reset()` clears internal counters.
 
 - `func Pause(cycles ...int)`
-  - Issues an architecture-specific CPU hint and must not block or yield the scheduler.
+  - Issues an architecture-specific CPU pause hint. If omitted, `cycles` defaults to 30 pause hints. `cycles` is a repeat count for pause hints, not a calibrated CPU-cycle delay. On hardware-pause targets it does not block or yield the scheduler; wasm and unsupported fallback targets may yield via `runtime.Gosched()`.
 
 - `func Yield(duration ...time.Duration)`
   - Cooperatively yields. By default sleeps for a small duration; if non-positive, falls back to `runtime.Gosched()`.

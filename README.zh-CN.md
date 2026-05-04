@@ -55,7 +55,7 @@ func main() {
   - `Reset()` 重置内部计数。
 
 - `func Pause(cycles ...int)`
-  - 发出与体系结构相关的 CPU 提示，不会阻塞或让出调度器。
+  - 发出与体系结构相关的 CPU pause 提示。省略 `cycles` 时默认使用 30 个 pause 提示。`cycles` 是 pause 提示的重复次数，不是校准后的 CPU 周期延迟。在具备硬件 pause 的目标上不会阻塞或让出调度器；wasm 和不受支持的回退目标可能通过 `runtime.Gosched()` 让出。
 
 - `func Yield(duration ...time.Duration)`
   - 协作式让出。默认睡眠一个很短的时间；若参数为非正值，则回退到 `runtime.Gosched()`。
