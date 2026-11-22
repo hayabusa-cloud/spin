@@ -1,0 +1,34 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+          check-latest: true
+          cache: false
+
+      - name: Run benchmarks
+        run: |
+          go version
+          uname -srm
+          go test -run '^$' -bench . -benchmem -benchtime=200ms -count=10 -cpu=2 -timeout=5m .

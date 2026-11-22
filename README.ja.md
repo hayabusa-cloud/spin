@@ -1,85 +1,77 @@
-[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/spin)](https://goreportcard.com/report/github.com/hayabusa-cloud/spin)
-[![Coverage Status](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 # spin
 
-高性能・低レイテンシ向けに、スピンロック（`Lock`）とスピン待機（`Wait`）のプリミティブを提供します。
+[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
+[![Benchmarks](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml)
+[![Codecov](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- `Lock` — 極短いクリティカルセクション向けのスピンロック
-- `Wait` — 適応型スピン待機
-- `Pause` — タイトループ向けの CPU ヒント
-- `Yield` — 非ホットパス向けの協調的譲歩/スリープ
+Go で短時間の競合を扱うためのスピンロックと適応型スピン待機を提供します。
 
-言語: [English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | 日本語 | [Français](./README.fr.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | **日本語** | [Français](./README.fr.md)
+
+## 概要
+
+`Lock` はごく短いクリティカルセクションで共有状態を保護します。`Wait` は、間もなく変化すると見込まれる条件を goroutine が繰り返し確認するときに使います。競合が起きると、どちらも最初は短いポーズを挟み、待機が長引くにつれて Go のスケジューラに実行権を譲る頻度が上がります。
 
 ## インストール
+
+Go 1.27 以降が必要です。
 
 ```shell
 go get code.hybscloud.com/spin
 ```
 
-## クイックスタート
+## 使い方
+
+書き込み側の goroutine はすべて `mu` と 2 つのカウンターを共有します。64 バイトのパケットを 1 個数える処理は、短いクリティカルセクションに収まります。
 
 ```go
-func workReady() bool { return true }
+var mu spin.Lock
+var packets, bytes int
 
-func main() {
-    var sl spin.Lock
-    sl.Lock()
-    // クリティカルセクション
-    sl.Unlock()
-    fmt.Println("ok")
+mu.Lock()
+packets++
+bytes += 64
+mu.Unlock()
+```
 
-    var sw spin.Wait
-    for !workReady() {
-        sw.Once()
-    }
+処理の準備がすぐに整う見込みなら、再試行のたびに同じ `Wait` を使います。準備ができたかどうかを調べる `workReady` は呼び出し元が用意します。
 
-    spin.Pause() // ホットループでの CPU ヒント
-    spin.Yield() // 協調的譲歩（非ホットパス）
+```go
+var wait spin.Wait
+for !workReady() {
+	wait.Once()
 }
 ```
 
-## API 概要
+回数を決めて短くポーリングする場合は、次の確認の前に `Pause` を呼びます。
 
-- `type Lock`
-  - `Lock()` 適応的バックオフで取得できるまでスピンします。
-  - `Unlock()` 解放します。
-  - `Try()` 待たずに取得を試みます。成功なら `true` を返します。
+```go
+spin.Pause()
+```
 
-- `type Wait`
-  - `Once()` 1 回の適応ステップ（CPU `Pause` または協調的譲歩）を実行します。タイトループに適します。
-  - `WillYield()` 次の `Once()` が pause ではなく譲歩するかどうかを示します。
-  - `Reset()` 内部カウンタをクリアします。
+次の再試行まで設定された時間だけスリープできる場合は、`Yield` を使います。
 
-- `func Pause(cycles ...int)`
-  - アーキテクチャ依存の CPU pause ヒントを発行します。`cycles` を省略すると既定で 30 回の pause ヒントを使用します。`cycles` は pause ヒントの反復回数であり、校正済みの CPU サイクル遅延ではありません。ハードウェア pause 対応ターゲットではスケジューラをブロック/譲歩しませんが、wasm と未対応のフォールバックターゲットでは `runtime.Gosched()` によって譲歩する場合があります。
+```go
+spin.Yield()
+```
 
-- `func Yield(duration ...time.Duration)`
-  - 協調的に譲歩します。既定では短時間 sleep し、非正値なら `runtime.Gosched()` にフォールバックします。
+## Lock と Wait
 
-- `func SetYieldDuration(d time.Duration)`
-  - `Yield()` に明示引数がない場合の基準 sleep 時間を設定します。
+- `Lock` は取得順を保証せず、ゼロ値は未ロック状態です。`Try()` はロックの取得を一度だけ試み、成功すると `true` を返します。汎用の排他制御には `sync.Mutex` を使います。
+- ポーリングする goroutine ごとに、ゼロ値の `Wait` を用意します。`WillYield()` は、次の `Once()` が `runtime.Gosched()` を直接呼ぶかどうかを返します。`Reset()` を呼ぶと、ポーズの間隔が初期値に戻ります。
 
-注意:
-- `Lock` は非フェアであり、汎用ミューテックスとして使うべきではありません。
-- スピンループではアドホックな `for {}` + `runtime.Gosched()` より `Wait` を優先してください。
+## Pause と Yield
 
-対応アーキテクチャ: amd64, arm64, 386, arm, riscv64, ppc64le, s390x, loong64, wasm.
+- アセンブリ実装を持つアーキテクチャでは、ポーリングループの中で `Pause(n)` を呼ぶと、プロセッサへのヒント命令を `n` 回繰り返します。引数を省略するか 0 以下の値を指定すると、繰り返し回数は 30 回になります。所要時間はプロセッサによって異なります。
+- `d` が正なら `Yield(d)` は `d` の間スリープし、それ以外では `runtime.Gosched()` を呼びます。`Yield()` が使うデフォルトの待機時間は初期状態で 250 マイクロ秒で、`SetYieldDuration(d)` で変更できます。
 
-## 使いどころ
+## 対応プラットフォーム
 
-- `Lock` は極短いクリティカルセクション専用。非フェアで、特殊用途を想定しています。
-- `Wait` は近い将来に進捗が見込めるときの適応型スピン待機に。`Pause` から協調的譲歩へ段階的にエスカレートします。
-- `Pause` はホットなポーリングループで使用し、消費電力とハイパースレッド間の競合を抑えます。
-- `Yield` は非ホットパスで使用し、他の goroutine に実行機会を協調的に与えます（短時間の sleep を伴う場合があります）。
-
-汎用の相互排他には `sync.Mutex` を推奨します。
+`386`、`amd64`、`arm64`、`loong64`、`ppc64le`、`riscv64`、`s390x` では、`Pause` はアセンブリで実装されています。`arm` や `wasm` を含む他のターゲットでは、`Pause` を呼ぶたびに `runtime.Gosched()` で一度だけ実行権を譲ります。
 
 ## ライセンス
 
-MIT — [LICENSE](./LICENSE) を参照してください。
+[MIT ライセンス](./LICENSE)
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

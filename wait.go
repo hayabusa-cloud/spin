@@ -6,16 +6,13 @@ package spin
 
 import "runtime"
 
-// Wait is a lightweight adaptive spin-wait helper used in tight polling loops.
-//
-// It escalates from a short CPU pause to a cooperative scheduler yield
-// based on the recent history of calls. The zero value is ready to use.
+// Wait adapts to short local contention. The zero value is ready to use.
 type Wait struct {
 	counter, n uint32
 }
 
-// Once performs a single adaptive step in the spin-wait strategy:
-// it either issues a light `Pause()` or yields the scheduler via `runtime.Gosched()`.
+// Once takes one wait step. It starts with [Pause] and calls [runtime.Gosched]
+// more often as the wait continues.
 func (s *Wait) Once() {
 	y := s.WillYield()
 	s.counter++
@@ -27,10 +24,9 @@ func (s *Wait) Once() {
 	Pause(defaultPauseCycles)
 }
 
-// WillYield reports whether the next call to `Once` will yield the processor
-// (`runtime.Gosched`) instead of performing a light `Pause()`.
-//
-// It is a pure "peek": it does not modify the internal state.
+// WillYield reports whether the next [Wait.Once] calls [runtime.Gosched]
+// directly. It leaves the wait state unchanged. On fallback targets, [Pause]
+// can also yield to the scheduler.
 func (s *Wait) WillYield() bool {
 	k := s.n >> 2
 	if k > 4 {
@@ -43,7 +39,7 @@ func (s *Wait) WillYield() bool {
 	return false
 }
 
-// Reset resets the counters in Wait.
+// Reset starts the wait again at its initial pause interval.
 func (s *Wait) Reset() {
 	s.counter = 0
 	s.n = 0
