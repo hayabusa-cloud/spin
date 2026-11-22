@@ -146,10 +146,23 @@ func BenchmarkWait(b *testing.B) {
 	})
 
 	b.Run("WillYield", func(b *testing.B) {
+		// Record states from every yield interval before timing the prediction.
+		var states [128]spin.Wait
 		var sw spin.Wait
-		for range b.N {
-			_ = sw.WillYield()
+		for i := range states {
+			states[i] = sw
+			sw.Once()
 		}
+
+		predicted := 0
+		b.ResetTimer()
+		for i := range b.N {
+			if states[i%len(states)].WillYield() {
+				predicted++
+			}
+		}
+		b.StopTimer()
+		b.ReportMetric(float64(predicted)/float64(b.N), "predicted-yields/op")
 	})
 
 	b.Run("Reset", func(b *testing.B) {
