@@ -38,8 +38,7 @@ func BenchmarkLock(b *testing.B) {
 	// Contention scaling benchmarks
 	for _, procs := range []int{2, 4, 8, 16} {
 		b.Run("Contended/GOMAXPROCS="+itoa(procs), func(b *testing.B) {
-			oldProcs := runtime.GOMAXPROCS(procs)
-			defer runtime.GOMAXPROCS(oldProcs)
+			setBenchmarkProcs(b, procs)
 
 			var lk spin.Lock
 			b.RunParallel(func(pb *testing.PB) {
@@ -91,38 +90,45 @@ func BenchmarkLockVsMutex(b *testing.B) {
 	})
 }
 
-// BenchmarkLockWithWork measures lock performance with simulated work.
+// BenchmarkLockWithWork records 64-byte packets with two Go processors.
 func BenchmarkLockWithWork(b *testing.B) {
-	work := func() {
-		// Simulate ~10ns of work
-		x := 0
-		for i := range 10 {
-			x += i
+	const procs = 2
+	type counters struct{ packets, bytes uint64 }
+	for _, workers := range []int{2, 8} {
+		run := func(name string, record func(*testing.PB, *counters)) {
+			b.Run(name+"/GOMAXPROCS=2/workers="+itoa(workers), func(b *testing.B) {
+				setBenchmarkProcs(b, procs)
+				b.SetParallelism(workers / procs)
+				var total counters
+				b.ResetTimer()
+				b.RunParallel(func(pb *testing.PB) { record(pb, &total) })
+				b.StopTimer()
+				if total.packets != uint64(b.N) || total.bytes != 64*uint64(b.N) {
+					b.Fatalf("recorded %d packets and %d bytes for %d updates", total.packets, total.bytes, b.N)
+				}
+			})
 		}
-		_ = x
-	}
 
-	b.Run("spin.Lock", func(b *testing.B) {
 		var lk spin.Lock
-		b.RunParallel(func(pb *testing.PB) {
+		run("spin.Lock", func(pb *testing.PB, total *counters) {
 			for pb.Next() {
 				lk.Lock()
-				work()
+				total.packets++
+				total.bytes += 64
 				lk.Unlock()
 			}
 		})
-	})
 
-	b.Run("sync.Mutex", func(b *testing.B) {
 		var mu sync.Mutex
-		b.RunParallel(func(pb *testing.PB) {
+		run("sync.Mutex", func(pb *testing.PB, total *counters) {
 			for pb.Next() {
 				mu.Lock()
-				work()
+				total.packets++
+				total.bytes += 64
 				mu.Unlock()
 			}
 		})
-	})
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -239,6 +245,15 @@ func BenchmarkSpinWaitPattern(b *testing.B) {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
+
+func setBenchmarkProcs(b *testing.B, procs int) {
+	b.Helper()
+	previous := runtime.GOMAXPROCS(procs)
+	b.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	if got := runtime.GOMAXPROCS(0); got != procs {
+		b.Skipf("requested GOMAXPROCS=%d, runtime permits %d", procs, got)
+	}
+}
 
 func itoa(n int) string {
 	if n == 0 {
