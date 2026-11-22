@@ -1,85 +1,77 @@
-[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/spin)](https://goreportcard.com/report/github.com/hayabusa-cloud/spin)
-[![Coverage Status](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 # spin
 
-Proporciona primitivas de spinlock (`Lock`) y espera activa (`Wait`) para escenarios sensibles al rendimiento.
+[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
+[![Benchmarks](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml)
+[![Codecov](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- `Lock` — spinlock para secciones críticas extremadamente cortas
-- `Wait` — espera activa adaptativa
-- `Pause` — pista de CPU para bucles ajustados
-- `Yield` — cesión cooperativa/sueño para rutas no calientes
+Bloqueos de espera activa y esperas adaptativas para situaciones de contención breve en Go.
 
-Idiomas: [English](./README.md) | [简体中文](./README.zh-CN.md) | Español | [日本語](./README.ja.md) | [Français](./README.fr.md)
+[English](./README.md) | [简体中文](./README.zh-CN.md) | **Español** | [日本語](./README.ja.md) | [Français](./README.fr.md)
+
+## Descripción general
+
+`Lock` protege el estado compartido en secciones críticas muy breves. Una goroutine puede usar `Wait` para consultar una condición que espera que cambie pronto. Cuando hay contención, ambos empiezan con pausas breves y ceden la ejecución al planificador de Go con mayor frecuencia a medida que se prolonga la espera.
 
 ## Instalación
+
+Requiere Go 1.27 o posterior.
 
 ```shell
 go get code.hybscloud.com/spin
 ```
 
-## Inicio rápido
+## Uso
+
+Las goroutines que escriben comparten `mu` y ambos contadores. Basta una sección crítica breve para registrar un paquete de 64 bytes.
 
 ```go
-func workReady() bool { return true }
+var mu spin.Lock
+var packets, bytes int
 
-func main() {
-    var sl spin.Lock
-    sl.Lock()
-    // sección crítica
-    sl.Unlock()
-    fmt.Println("ok")
+mu.Lock()
+packets++
+bytes += 64
+mu.Unlock()
+```
 
-    var sw spin.Wait
-    for !workReady() {
-        sw.Once()
-    }
+Si se espera que haya trabajo disponible en breve, use el mismo `Wait` en todos los reintentos. La aplicación proporciona `workReady` para comprobar si ya se puede continuar.
 
-    spin.Pause() // pista de CPU en un bucle caliente
-    spin.Yield() // cesión cooperativa (ruta no caliente)
+```go
+var wait spin.Wait
+for !workReady() {
+	wait.Once()
 }
 ```
 
-## Descripción de la API
+En un bucle de sondeo breve con un número limitado de intentos, use `Pause` entre comprobaciones.
 
-- `type Lock`
-  - `Lock()` gira hasta adquirir con retroceso adaptativo.
-  - `Unlock()` libera.
-  - `Try()` intenta adquirir sin esperar; devuelve `true` si tiene éxito.
+```go
+spin.Pause()
+```
 
-- `type Wait`
-  - `Once()` realiza un paso adaptativo (CPU `Pause` o cesión cooperativa), adecuado para bucles ajustados.
-  - `WillYield()` indica si el próximo `Once()` cederá en lugar de pausar.
-  - `Reset()` limpia contadores internos.
+Use `Yield` si puede esperar el intervalo configurado antes de volver a intentarlo.
 
-- `func Pause(cycles ...int)`
-  - Emite una pista CPU pause específica de la arquitectura. Si se omite, `cycles` usa 30 pistas pause por defecto. `cycles` es un conteo de repetición de pistas pause, no un retardo calibrado en ciclos de CPU. En objetivos con pause de hardware no bloquea ni cede al planificador; wasm y los objetivos de reserva no compatibles pueden ceder mediante `runtime.Gosched()`.
+```go
+spin.Yield()
+```
 
-- `func Yield(duration ...time.Duration)`
-  - Cede cooperativamente. Por defecto duerme un intervalo corto; si es no positivo, recurre a `runtime.Gosched()`.
+## Lock y Wait
 
-- `func SetYieldDuration(d time.Duration)`
-  - Establece la duración base usada por `Yield()` cuando no se proporciona argumento explícito.
+- `Lock` no garantiza un orden de adquisición y su valor cero está desbloqueado. `Try()` intenta adquirir el bloqueo una sola vez y devuelve `true` si lo consigue. Para la exclusión mutua de uso general, utilice `sync.Mutex`.
+- Cada goroutine que espera usa su propio `Wait`, inicializado con el valor cero. `WillYield()` indica si la siguiente llamada a `Once()` invocará directamente `runtime.Gosched()`. `Reset()` restablece el intervalo de pausa inicial.
 
-Notas:
-- `Lock` es no justo y no debe usarse como mutex de propósito general.
-- Prefiere `Wait` en bucles de espera activa en lugar de `for {}` + `runtime.Gosched()` ad hoc.
+## Pause y Yield
 
-Arquitecturas: amd64, arm64, 386, arm, riscv64, ppc64le, s390x, loong64, wasm.
+- En las arquitecturas con implementación en ensamblador, `Pause(n)` permite repetir `n` veces una instrucción de pausa del procesador dentro de un bucle de sondeo. Si se omite el argumento o se pasa un valor menor o igual que cero, se realizan 30 repeticiones. La duración depende del procesador.
+- Si `d` es positivo, `Yield(d)` suspende la goroutine durante `d`. En caso contrario, llama a `runtime.Gosched()`. `Yield()` usa la duración predeterminada, inicialmente de 250 µs. `SetYieldDuration(d)` permite cambiarla.
 
-## Cuándo usar
+## Plataformas compatibles
 
-- Use `Lock` solo para secciones críticas extremadamente cortas; es no justo y pensado para escenarios especializados.
-- Use `Wait` para espera activa adaptativa cuando se espera progreso muy pronto; escala de `Pause` a cesión cooperativa.
-- Use `Pause` en bucles de sondeo calientes para reducir potencia y la contención entre hiperhilos.
-- Use `Yield` en rutas no calientes para permitir cooperativamente que se ejecuten otras goroutines (opcionalmente durmiendo un corto intervalo).
-
-Para exclusión mutua de propósito general, prefiera `sync.Mutex`.
+`Pause` está implementado en ensamblador para `386`, `amd64`, `arm64`, `loong64`, `ppc64le`, `riscv64` y `s390x`. En las demás arquitecturas, incluidas `arm` y `wasm`, cada llamada a `Pause` cede la ejecución una vez mediante `runtime.Gosched()`.
 
 ## Licencia
 
-MIT — ver [LICENSE](./LICENSE).
+[Licencia MIT](./LICENSE)
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

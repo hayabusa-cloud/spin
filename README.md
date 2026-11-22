@@ -1,85 +1,77 @@
-[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/spin)](https://goreportcard.com/report/github.com/hayabusa-cloud/spin)
-[![Coverage Status](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 # spin
 
-Provides spinlock(`Lock`) and spin-wait(`Wait`) primitives for performance-sensitive spinning.
+[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
+[![Benchmarks](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml)
+[![Codecov](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- `Lock` — spinlock for extremely short critical sections
-- `Wait` — spin wait for adaptive spinning
-- `Pause` — CPU hint for tight loops
-- `Yield` — cooperative yield/sleep for non-hot paths
+Spin locks and adaptive waits for short-lived contention in Go.
 
-Languages: English | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
+**English** | [简体中文](./README.zh-CN.md) | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
+
+## Overview
+
+`Lock` protects shared state in very short critical sections. `Wait` lets a goroutine poll a condition it expects to change soon. Under contention, both pause briefly at first and yield to the Go scheduler more often as the wait continues.
 
 ## Installation
+
+Requires Go 1.27 or later.
 
 ```shell
 go get code.hybscloud.com/spin
 ```
 
-## Quick start
+## Usage
+
+All writers share `mu` and both counters. Recording a 64-byte packet takes one short critical section.
 
 ```go
-func workReady() bool { return true }
+var mu spin.Lock
+var packets, bytes int
 
-func main() {
-    var sl spin.Lock
-    sl.Lock()
-    // critical section
-    sl.Unlock()
-    fmt.Println("ok")
+mu.Lock()
+packets++
+bytes += 64
+mu.Unlock()
+```
 
-    var sw spin.Wait
-    for !workReady() {
-        sw.Once()
-    }
+When local work should be ready soon, keep one `Wait` across retries. The caller supplies the `workReady` check.
 
-    spin.Pause() // CPU hint in a hot loop
-    spin.Yield() // cooperative yield (non-hot path)
+```go
+var wait spin.Wait
+for !workReady() {
+	wait.Once()
 }
 ```
 
-## API overview
+Use `Pause` between checks in a short, bounded polling loop.
 
-- `type Lock`
-  - `Lock()` spins until acquired with adaptive backoff.
-  - `Unlock()` releases.
-  - `Try()` attempts to acquire without waiting; returns true on success.
+```go
+spin.Pause()
+```
 
-- `type Wait`
-  - `Once()` performs one adaptive step (CPU `Pause` or cooperative yield), suitable for tight loops.
-  - `WillYield()` reports whether the next `Once()` will yield instead of pausing.
-  - `Reset()` clears internal counters.
+Use `Yield` when the next retry can wait for the configured sleep interval.
 
-- `func Pause(cycles ...int)`
-  - Issues an architecture-specific CPU pause hint. If omitted, `cycles` defaults to 30 pause hints. `cycles` is a repeat count for pause hints, not a calibrated CPU-cycle delay. On hardware-pause targets it does not block or yield the scheduler; wasm and unsupported fallback targets may yield via `runtime.Gosched()`.
+```go
+spin.Yield()
+```
 
-- `func Yield(duration ...time.Duration)`
-  - Cooperatively yields. By default sleeps for a small duration; if non-positive, falls back to `runtime.Gosched()`.
+## Lock and Wait
 
-- `func SetYieldDuration(d time.Duration)`
-  - Sets the base sleep duration used by `Yield()` when no explicit argument is provided.
+- `Lock` is non-fair and its zero value is unlocked. `Try()` attempts to acquire it once and returns `true` on success. For general-purpose locking, use `sync.Mutex`.
+- Each polling goroutine uses its own zero-value `Wait`. `WillYield()` reports whether the next `Once()` will call `runtime.Gosched()` directly. `Reset()` restores the initial pause interval.
 
-Notes:
-- `Lock` is non-fair and should not be used as a general-purpose mutex.
-- Prefer `Wait` in spin loops instead of ad-hoc `for {}` + `runtime.Gosched()`.
+## Pause and Yield
 
-Architectures: amd64, arm64, 386, arm, riscv64, ppc64le, s390x, loong64, wasm.
+- On targets with an assembly implementation, `Pause(n)` repeats a processor hint `n` times in a tight polling loop. An omitted or non-positive count selects 30 repetitions. The elapsed time depends on the processor.
+- `Yield(d)` sleeps for `d` if the duration is positive and calls `runtime.Gosched()` otherwise. `Yield()` uses the default duration, initially 250 µs. `SetYieldDuration(d)` changes that default.
 
-## When to use
+## Platform support
 
-- Use `Lock` only for extremely short critical sections; it is non-fair and intended for specialized scenarios.
-- Use `Wait` for adaptive spin-waiting when progress is expected very soon; it escalates from `Pause` to cooperative yield.
-- Use `Pause` in tight polling loops on hot paths to reduce power and contention between hyper-threads.
-- Use `Yield` in non-hot paths to cooperatively let other goroutines run (optionally sleeping a short duration).
-
-For general-purpose mutual exclusion, prefer `sync.Mutex`.
+`Pause` uses assembly on `386`, `amd64`, `arm64`, `loong64`, `ppc64le`, `riscv64`, and `s390x`. On other targets, including `arm` and `wasm`, each call to `Pause` yields once through `runtime.Gosched()`.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+[MIT License](./LICENSE)
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)

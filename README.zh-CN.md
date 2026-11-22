@@ -1,85 +1,77 @@
-[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hayabusa-cloud/spin)](https://goreportcard.com/report/github.com/hayabusa-cloud/spin)
-[![Coverage Status](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 # spin
 
-提供用于性能敏感场景的自旋锁（`Lock`）与自旋等待（`Wait`）原语。
+[![Go Reference](https://pkg.go.dev/badge/code.hybscloud.com/spin.svg)](https://pkg.go.dev/code.hybscloud.com/spin)
+[![Benchmarks](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml/badge.svg)](https://github.com/hayabusa-cloud/spin/actions/workflows/benchmarks.yml)
+[![Codecov](https://codecov.io/gh/hayabusa-cloud/spin/graph/badge.svg)](https://codecov.io/gh/hayabusa-cloud/spin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- `Lock` — 面向极短临界区的自旋锁
-- `Wait` — 自适应自旋等待
-- `Pause` — 面向紧循环的 CPU 提示
-- `Yield` — 非热点路径上的协作式让出/睡眠
+用于在 Go 中处理短暂竞争的自旋锁和自适应等待原语。
 
-语言: [English](./README.md) | 简体中文 | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
+[English](./README.md) | **简体中文** | [Español](./README.es.md) | [日本語](./README.ja.md) | [Français](./README.fr.md)
+
+## 概述
+
+`Lock` 在极短的临界区内保护共享状态。goroutine 可以用 `Wait` 轮询预计很快就会改变的条件。发生竞争时，两者起初只做短暂停顿，随着等待时间延长，会更频繁地将执行权交还给 Go 调度器。
 
 ## 安装
+
+需要 Go 1.27 或更高版本。
 
 ```shell
 go get code.hybscloud.com/spin
 ```
 
-## 快速开始
+## 用法
+
+所有写入方共享 `mu` 和两个计数器。统计一个 64 字节的数据包只需要一个很短的临界区。
 
 ```go
-func workReady() bool { return true }
+var mu spin.Lock
+var packets, bytes int
 
-func main() {
-    var sl spin.Lock
-    sl.Lock()
-    // 临界区
-    sl.Unlock()
-    fmt.Println("ok")
+mu.Lock()
+packets++
+bytes += 64
+mu.Unlock()
+```
 
-    var sw spin.Wait
-    for !workReady() {
-        sw.Once()
-    }
+如果本地工作预计很快就绪，在重试时复用同一个 `Wait`。调用方提供 `workReady` 来检查是否就绪。
 
-    spin.Pause() // 在热点循环里给出 CPU 提示
-    spin.Yield() // 协作式让出（非热点路径）
+```go
+var wait spin.Wait
+for !workReady() {
+	wait.Once()
 }
 ```
 
-## API 概览
+在重试次数有限的短轮询循环中，可在两次检查之间调用 `Pause`。
 
-- `type Lock`
-  - `Lock()` 采用自适应回退自旋直到获取。
-  - `Unlock()` 释放。
-  - `Try()` 非阻塞尝试获取；成功返回 `true`。
+```go
+spin.Pause()
+```
 
-- `type Wait`
-  - `Once()` 执行一次自适应步骤（CPU `Pause` 或协作让出），适合紧循环。
-  - `WillYield()` 指示下一次 `Once()` 是否会让出而非暂停。
-  - `Reset()` 重置内部计数。
+如果下次重试前可以休眠一段时间，可调用 `Yield`，使用配置的休眠时长。
 
-- `func Pause(cycles ...int)`
-  - 发出与体系结构相关的 CPU pause 提示。省略 `cycles` 时默认使用 30 个 pause 提示。`cycles` 是 pause 提示的重复次数，不是校准后的 CPU 周期延迟。在具备硬件 pause 的目标上不会阻塞或让出调度器；wasm 和不受支持的回退目标可能通过 `runtime.Gosched()` 让出。
+```go
+spin.Yield()
+```
 
-- `func Yield(duration ...time.Duration)`
-  - 协作式让出。默认睡眠一个很短的时间；若参数为非正值，则回退到 `runtime.Gosched()`。
+## Lock 与 Wait
 
-- `func SetYieldDuration(d time.Duration)`
-  - 设置当 `Yield()` 未显式提供参数时所用的基础睡眠时长。
+- `Lock` 是非公平锁，零值表示未加锁。`Try()` 尝试获取锁一次，成功时返回 `true`。通用互斥场景请使用 `sync.Mutex`。
+- 每个轮询的 goroutine 使用自己的零值 `Wait`。`WillYield()` 表示下一次 `Once()` 是否会直接调用 `runtime.Gosched()`。`Reset()` 恢复初始的暂停间隔。
 
-注意：
-- `Lock` 为非公平实现，不应作为通用互斥锁使用。
-- 在自旋循环中优先使用 `Wait`，避免临时性的 `for {}` + `runtime.Gosched()` 方案。
+## Pause 与 Yield
 
-支持架构：amd64、arm64、386、arm、riscv64、ppc64le、s390x、loong64、wasm。
+- 在采用汇编实现的平台上，可以在紧密的轮询循环中调用 `Pause(n)`，将处理器提示指令重复执行 `n` 次。省略参数或传入非正数时，默认重复 30 次。实际耗时取决于处理器。
+- `d` 为正时，`Yield(d)` 休眠 `d` 指定的时长，否则调用 `runtime.Gosched()`。`Yield()` 使用默认时长，初始值为 250 微秒，可通过 `SetYieldDuration(d)` 修改。
 
-## 适用场景
+## 平台支持
 
-- `Lock`：仅用于极短临界区；该锁非公平，面向特定场景。
-- `Wait`：当预期很快就能取得进展时用于自适应自旋等待；其会从 `Pause` 升级到协作式让出。
-- `Pause`：用于热点轮询循环，降低功耗并减少超线程之间的竞争。
-- `Yield`：用于非热点路径，协作式地让其他 goroutine 运行（可选地睡眠短时）。
-
-通用互斥推荐使用 `sync.Mutex`。
+`Pause` 在 `386`、`amd64`、`arm64`、`loong64`、`ppc64le`、`riscv64` 和 `s390x` 上采用汇编实现。在 `arm`、`wasm` 等其他目标平台上，每次调用 `Pause` 都会通过 `runtime.Gosched()` 让出一次执行权。
 
 ## 许可证
 
-MIT — 参见 [LICENSE](./LICENSE)。
+[MIT 许可证](./LICENSE)
 
-©2025 Hayabusa Cloud Co., Ltd.
+©2025 [Hayabusa Cloud Co., Ltd.](https://code.hybscloud.com)
